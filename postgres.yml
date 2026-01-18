@@ -1,0 +1,73 @@
+---
+- name: Install and config Postgres server
+  hosts: db_server
+  become: yes
+  vars:
+    db_name: "app_db"
+    db_user: "app_user"
+    db_password: "123123"
+    postgres_version: "17"
+
+  tasks:
+    - name: Install PostgreSQL, dependencies and ACL
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+          - acl
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure PostgreSQL is running
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Create a new database
+      community.postgresql.postgresql_db:
+        name: "{{ db_name }}"
+        state: present
+      become_user: postgres
+
+    - name: Create database user
+      community.postgresql.postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        state: present
+      become_user: postgres
+
+    - name: Grant all privileges
+      community.postgresql.postgresql_privs:
+        db: "{{ db_name }}"
+        role: "{{ db_user }}"
+        privs: "ALL"
+        type: database
+      become_user: postgres
+
+    - name: Enable remote connections in postgresql.conf
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: "^#?listen_addresses ="
+        line: "listen_addresses = '*'"
+      notify: Restart Postgres
+
+    - name: Allow remote access in pg_hba.conf
+      community.postgresql.postgresql_pg_hba:
+        dest: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+        contype: host
+        users: "{{ db_user }}"
+        source: all
+        databases: "{{ db_name }}"
+        method: scram-sha-256 # Hoặc md5
+        create: true
+      become_user: postgres
+      notify: Restart Postgres
+
+  handlers:
+    - name: Restart Postgres
+      service:
+        name: postgresql
+        state: restarted
